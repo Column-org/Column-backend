@@ -33,6 +33,15 @@ app.use((req, res, next) => {
     next();
 });
 
+// Root route for health check
+app.get('/', (req, res) => {
+    res.json({
+        status: 'online',
+        message: 'Satoshi Protocol Backend is running',
+        network: DEFAULT_NETWORK
+    });
+});
+
 // Email sending routes
 app.use('/api', sendCodeRouter);
 
@@ -622,7 +631,14 @@ function getLocalIPAddress() {
 
 const localIP = getLocalIPAddress();
 
-app.listen(port, '0.0.0.0', () => {
-    console.log(`✅ Backend running at http://localhost:${port}`);
-    console.log(`📱 Access from phone at http://${localIP}:${port}`);
-});
+// Only start the server if we're not in a Vercel environment
+// Vercel handles the listener for us when we export the app
+if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
+    app.listen(port, '0.0.0.0', () => {
+        console.log(`✅ Backend running at http://localhost:${port}`);
+        console.log(`📱 Access from phone at http://${localIP}:${port}`);
+    });
+}
+
+// Export the app for Vercel
+export default app;
