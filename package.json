@@ -27,7 +27,6 @@
         "dotenv": "^16.6.1",
         "express": "^5.2.1",
         "node-fetch": "^3.3.2",
-        "resend": "^6.5.2",
         "viem": "^2.21.54"
     },
     "devDependencies": {
