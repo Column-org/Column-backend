@@ -5,35 +5,36 @@
     "main": "index.js",
     "type": "module",
     "scripts": {
-      "dev": "nodemon index.js",
-      "start": "node index.js",
-      "lint": "eslint .",
-      "test": "echo \"No tests configured\""
+        "dev": "nodemon index.js",
+        "start": "node index.js",
+        "lint": "eslint .",
+        "test": "echo \"No tests configured\""
     },
     "keywords": [
-      "express",
-      "aptos",
-      "sdk",
-      "privy",
-      "expo",
-      "movement"
+        "express",
+        "aptos",
+        "sdk",
+        "privy",
+        "expo",
+        "movement"
     ],
     "author": "Taiwo",
     "license": "MIT",
     "dependencies": {
-      "@aptos-labs/ts-sdk": "^5.1.1",
-      "axios": "^1.7.4",
-      "cors": "^2.8.5",
-      "dotenv": "^16.4.5",
-      "express": "^5.1.0",
-      "node-fetch": "^3.3.2",
-      "viem": "^2.21.54"
+        "@aptos-labs/ts-sdk": "^5.1.1",
+        "axios": "^1.7.4",
+        "cors": "^2.8.5",
+        "dotenv": "^16.6.1",
+        "express": "^5.2.1",
+        "node-fetch": "^3.3.2",
+        "resend": "^6.5.2",
+        "viem": "^2.21.54"
     },
     "devDependencies": {
-      "eslint": "^9.12.0",
-      "nodemon": "^3.1.7"
+        "eslint": "^9.12.0",
+        "nodemon": "^3.1.7"
     },
     "engines": {
-      "node": ">=18.0.0"
+        "node": ">=18.0.0"
     }
-  }
+}

@@ -17,6 +17,7 @@ import {
     Hex,
     Deserializer,
 } from '@aptos-labs/ts-sdk';
+import sendCodeRouter from './email/send-code-email.js';
 
 dotenv.config();
 
@@ -31,6 +32,9 @@ app.use((req, res, next) => {
     console.log(`${req.method} ${req.path}`);
     next();
 });
+
+// Email sending routes
+app.use('/api', sendCodeRouter);
 
 const NETWORK_CONFIGS = {
     mainnet: {
@@ -157,7 +161,7 @@ app.post('/submit-transaction', async (req, res) => {
             new Ed25519Signature(signature)
         );
 
-       const backendRawTxn = SimpleTransaction.deserialize(new Deserializer(Hex.fromHexInput(rawTxnHex).toUint8Array()));
+        const backendRawTxn = SimpleTransaction.deserialize(new Deserializer(Hex.fromHexInput(rawTxnHex).toUint8Array()));
 
         const pendingTxn = await aptos.transaction.submit.simple({
             transaction: backendRawTxn,
@@ -230,6 +234,44 @@ app.get('/balance/:address', async (req, res) => {
 });
 
 // ======================================
+// 4b) Get Fungible Asset balance
+// ======================================
+app.get('/fa-balance/:owner/:asset', async (req, res) => {
+    const { owner, asset } = req.params;
+    const networkKey = resolveNetwork(req.query.network);
+    console.log(`FA Balance request: owner=${owner}, asset=${asset}, network=${networkKey}`);
+
+    try {
+        const aptos = getAptosClient(networkKey);
+
+        // Normalize addresses strictly using the SDK
+        const ownerAddr = AccountAddress.from(owner).toString();
+        const assetAddr = AccountAddress.from(asset).toString();
+
+        console.log(`Querying balance for owner: ${ownerAddr} and asset: ${assetAddr}`);
+
+        const payload = {
+            function: "0x1::primary_fungible_store::balance",
+            typeArguments: ["0x1::fungible_asset::Metadata"],
+            type_arguments: ["0x1::fungible_asset::Metadata"], // Redundant key for compatibility
+            functionArguments: [ownerAddr, assetAddr],
+            arguments: [ownerAddr, assetAddr], // Redundant key for compatibility
+        };
+
+        console.log('Sending view payload:', JSON.stringify(payload, null, 2));
+
+        const balanceRes = await aptos.view({ payload });
+
+        const balance = balanceRes && balanceRes.length > 0 ? balanceRes[0].toString() : "0";
+        console.log(`FA Balance result: ${balance}`);
+        res.json({ balance });
+    } catch (error) {
+        console.error('Error fetching FA balance details:', error);
+        res.status(500).json({ error: 'Failed to fetch FA balance', details: error.message });
+    }
+});
+
+// ======================================
 // 5️⃣ Get account info
 // ======================================
 app.get('/account-info/:address', async (req, res) => {
@@ -249,7 +291,49 @@ app.get('/account-info/:address', async (req, res) => {
 // ======================================
 // 6️⃣ View transfer details
 // ======================================
-const MODULE_ADDRESS = '0x00eb30f24eab56506b8abaea431fb0c6f6aa64622018298b54b1c3d40006fc75';
+const MODULE_ADDRESS = '0xfcd381dce435315523c7a0940729b3ff40ef9d5b0f206f214e8685f8bca2ca9c';
+
+// Helper: Query transfer by scanning recent events (fallback when view times out)
+async function queryTransferFromEvents(code, aptos) {
+    try {
+        console.log('Fallback: Querying transfer from events...');
+        // Query account events for both MOVE and FA transfer creation
+        const [moveEvents, faEvents] = await Promise.all([
+            aptos.getAccountEventsByEventType({
+                accountAddress: MODULE_ADDRESS,
+                eventType: `${MODULE_ADDRESS}::sendmove::TransferCreatedEvent`,
+            }),
+            aptos.getAccountEventsByEventType({
+                accountAddress: MODULE_ADDRESS,
+                eventType: `${MODULE_ADDRESS}::sendmove::FATransferCreatedEvent`,
+            })
+        ]);
+
+        const events = [...moveEvents, ...faEvents];
+
+        // Find event with matching code
+        const matchingEvent = events.find(event => event.data?.code === code);
+
+        if (matchingEvent) {
+            console.log('Found transfer in events:', matchingEvent.data);
+            return {
+                found: true,
+                type: matchingEvent.data.is_fa ? 'fa' : 'move',
+                sender: matchingEvent.data.sender,
+                amount: matchingEvent.data.amount,
+                assetMetadata: matchingEvent.data.asset_metadata,
+                createdAt: Math.floor(Date.now() / 1000), // Approximate
+                expiration: matchingEvent.data.expiration || Math.floor(Date.now() / 1000) + 86400,
+                isClaimable: true, // Assume claimable if found in events
+            };
+        }
+
+        return { found: false };
+    } catch (error) {
+        console.error('Error querying events:', error.message);
+        return { found: false };
+    }
+}
 
 app.post('/view-transfer', async (req, res) => {
     const { code, network: networkInput } = req.body;
@@ -264,35 +348,54 @@ app.post('/view-transfer', async (req, res) => {
         const networkKey = resolveNetwork(networkInput);
         const aptos = getAptosClient(networkKey);
 
+        // Normalize code: Strip 0x if present (common when extracting from events)
+        const normalizedCode = code.toLowerCase().replace('0x', '');
+        console.log('Normalized code for lookup:', normalizedCode);
+
         // Try MOVE transfer first
         try {
-            console.log('Calling get_transfer with code:', code);
-            const moveResult = await aptos.view({
+            console.log('Calling get_transfer with code:', normalizedCode);
+            console.log('Starting 30-second timeout...');
+
+            // Add timeout to prevent hanging
+            const viewPromise = aptos.view({
                 payload: {
                     function: `${MODULE_ADDRESS}::sendmove::get_transfer`,
-                    functionArguments: [code],
+                    functionArguments: [normalizedCode],
                 },
             });
 
+            const timeoutPromise = new Promise((_, reject) => {
+                setTimeout(() => {
+                    console.log('TIMEOUT FIRED! 30 seconds elapsed');
+                    reject(new Error('RPC timeout after 30 seconds'));
+                }, 30000);
+            });
+
+            console.log('Waiting for view or timeout...');
+            const moveResult = await Promise.race([viewPromise, timeoutPromise]);
+            console.log('Got result from MOVE view function:', moveResult);
+
             if (!moveResult || !Array.isArray(moveResult) || moveResult.length < 4) {
+                console.error('Invalid response from get_transfer:', moveResult);
                 throw new Error('Invalid response from get_transfer');
             }
 
             // MOVE transfer: [sender, amount, created_at, expiration]
             const [sender, amount, createdAt, expiration] = moveResult;
-            
+
             let isClaimable = false;
             try {
                 const claimableResult = await aptos.view({
                     payload: {
                         function: `${MODULE_ADDRESS}::sendmove::is_transfer_claimable`,
-                        functionArguments: [code],
+                        functionArguments: [normalizedCode],
                     },
                 });
                 isClaimable = claimableResult && Array.isArray(claimableResult) ? claimableResult[0] : false;
+                console.log('MOVE Claimable status:', isClaimable);
             } catch (claimableError) {
                 console.warn('Failed to check claimability for MOVE transfer:', claimableError.message);
-                // Continue with isClaimable = false
             }
 
             return res.json({
@@ -305,14 +408,33 @@ app.post('/view-transfer', async (req, res) => {
             });
         } catch (moveError) {
             console.log('MOVE transfer not found, trying FA transfer:', moveError.message);
-            
+
+            // Check if it's a timeout error - if so, try events fallback immediately
+            if (moveError.message.includes('timeout')) {
+                console.log('View function timed out, trying events fallback...');
+                const eventResult = await queryTransferFromEvents(code, aptos);
+
+                if (eventResult.found) {
+                    return res.json({
+                        type: eventResult.type,
+                        sender: eventResult.sender?.toString() || '',
+                        amount: eventResult.amount?.toString() || '0',
+                        assetMetadata: eventResult.assetMetadata?.toString() || null,
+                        createdAt: eventResult.createdAt?.toString() || '0',
+                        expiration: eventResult.expiration?.toString() || '0',
+                        isClaimable: eventResult.isClaimable,
+                        source: 'events', // Indicate this came from events
+                    });
+                }
+            }
+
             // If MOVE transfer fails, try FA transfer
             try {
                 console.log('Calling get_fa_transfer with code:', code);
                 const faResult = await aptos.view({
                     payload: {
                         function: `${MODULE_ADDRESS}::sendmove::get_fa_transfer`,
-                        functionArguments: [code],
+                        functionArguments: [normalizedCode],
                     },
                 });
 
@@ -322,7 +444,7 @@ app.post('/view-transfer', async (req, res) => {
 
                 // FA transfer: [sender, asset_metadata, amount, created_at, expiration]
                 const [sender, assetMetadata, amount, createdAt, expiration] = faResult;
-                
+
                 let isClaimable = false;
                 try {
                     const claimableResult = await aptos.view({
