@@ -615,25 +615,24 @@ app.use((err, req, res, next) => {
     });
 });
 
-// Get local IP address automatically
-function getLocalIPAddress() {
-    const interfaces = os.networkInterfaces();
-    for (const name of Object.keys(interfaces)) {
-        for (const iface of interfaces[name] || []) {
-            // Skip internal (loopback) and non-IPv4 addresses
-            if (iface.family === 'IPv4' && !iface.internal) {
-                return iface.address;
-            }
-        }
-    }
-    return 'localhost';
-}
-
-const localIP = getLocalIPAddress();
-
 // Only start the server if we're not in a Vercel environment
 // Vercel handles the listener for us when we export the app
 if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
+    // Get local IP address automatically
+    function getLocalIPAddress() {
+        const interfaces = os.networkInterfaces();
+        for (const name of Object.keys(interfaces)) {
+            for (const iface of interfaces[name] || []) {
+                // Skip internal (loopback) and non-IPv4 addresses
+                if (iface.family === 'IPv4' && !iface.internal) {
+                    return iface.address;
+                }
+            }
+        }
+        return 'localhost';
+    }
+
+    const localIP = getLocalIPAddress();
     app.listen(port, '0.0.0.0', () => {
         console.log(`✅ Backend running at http://localhost:${port}`);
         console.log(`📱 Access from phone at http://${localIP}:${port}`);
